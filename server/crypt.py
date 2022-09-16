@@ -1,18 +1,20 @@
+from typing import Optional
+
 import config
 from cryptography.fernet import Fernet
 
-message = "hello geeks"
 
-key = config.SECRET_KEY
-print(key)
+class Crypt:
+    __key = config.SECRET_KEY
+    __fernet = Fernet(__key)
 
-fernet = Fernet(key)
+    def __init__(self, message: Optional[str] = None):
+        self.message = message
 
-encMessage = fernet.encrypt(message.encode())
+    def encrypt(self, message: Optional[str] = None) -> str:
+        message = self.message or message
+        return self.__fernet.encrypt(message.encode()).decode()
 
-print("original string: ", message)
-print("encrypted string: ", encMessage)
-
-decMessage = fernet.decrypt(encMessage).decode()
-
-print("decrypted string: ", decMessage)
+    def decrypt(self, message: Optional[str] = None) -> str:
+        message = self.message or message
+        return self.__fernet.decrypt(message).decode()
