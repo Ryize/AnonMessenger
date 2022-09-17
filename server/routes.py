@@ -1,13 +1,15 @@
+import asyncio
+import json
 import re
-import time
 
+from cryptography.fernet import InvalidToken
 from quart import request, make_response, websocket
 
-from application import application, db
+from application import application, TEXT_DIRECTORY
+from server.buisness_logic import get_all_user_messages, login_existence_check, get_last_messages_date, to_json_type, \
+    user_existence_check
 from server.crypt import Crypt
 from server.models import User, Message
-
-TEXT_DIRECTORY = 'text'
 
 NAMESCPACES = {
     'auth': '/auth',
@@ -33,19 +35,16 @@ async def auth_register():
     # Проверка, что логин содержит только буквы и цифры
     if not re.fullmatch(r'[a-zA-Z0-9]*', login) or len(login) > 24:
         return await make_response(
-            'login содержит запрещённые символы (разрешены только буквы и цифры) или слишком длинный (максимум 24 символа)!',
+            'login содержит запрещённые символы (разрешены только буквы и цифры) или слишком длинный (максимум 24 '
+            'символа)!',
             409)
 
-    for user_in_db in User.query.all():
-        if Crypt().decrypt(user_in_db.code) == login:
-            return await make_response('Такой login уже существует!', 406)
+    if User.query.filter_by(login=login).first():
+        return await make_response('Такой login уже существует!', 406)
+
+    User.create(login=login)
 
     code = Crypt(login).encrypt()
-
-    user = User(code=code)
-
-    db.session.add(user)
-    db.session.commit()
     return await make_response(code, 201)
 
 
@@ -60,23 +59,33 @@ async def chat_send_message():
     message = Crypt(message).encrypt()
     if not (sender and recipient and message):
         return await make_response('Вы передали не все обязательные параметры (sender, recipient, message)!', 400)
-    for user_in_db in User.query.all():
-        login_in_db = Crypt().decrypt(user_in_db.code)
-        if login_in_db == sender:
-            sender = user_in_db
-        elif login_in_db == recipient:
-            recipient = user_in_db
-    if not (isinstance(sender, User) and isinstance(recipient, User)):
+
+    try:
+        sender, recipient = await user_existence_check(sender, recipient)
+    except ValueError:
         return await make_response('Отправитель или получатель не найдены!', 400)
-    message = Message(sender=sender.id, recipient=recipient.id, message=message)
-    db.session.add(message)
-    db.session.commit()
+
+    message = Message.create(sender=sender.id, recipient=recipient.id, message=message)
 
     return await make_response(message.message, 201)
 
 
 @application.websocket(NAMESCPACES['chat'] + '/accept/<code>')
-async def polling(code):
-    print(code)
+async def polling(code: str):
+    try:
+        user = await login_existence_check(code)
+    except InvalidToken:
+        return await websocket.send('Пользователь не найден!')
+
+    all_messages = await get_all_user_messages(user)
+    last_message_date = await get_last_messages_date(json.loads(all_messages))
+    await websocket.send(all_messages)
+
     while True:
-        await websocket.send('data')
+        new_message = Message.query.filter(Message.created_at > last_message_date,
+                                           (Message.sender == user.id) | (Message.recipient == user.id)).all()
+        if new_message:
+            new_message = to_json_type(new_message)
+            await websocket.send(json.dumps(new_message))
+            last_message_date = new_message[-1]['created_at']
+        await asyncio.sleep(1)
