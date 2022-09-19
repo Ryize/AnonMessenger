@@ -1,5 +1,7 @@
 import json
+from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 import requests
 import websockets
@@ -14,8 +16,17 @@ from config import SERVER_URL
 DATETIME_TEMPLATE = '%Y-%m-%d %H:%M:%S.%f'
 
 
+@dataclass
+class Storage:
+    code: str
+    msg_box: Any
+    dialogs: list
+    recipient: str
+    all_messages: list
+
+
 async def main():
-    global msg_box
+    global msg_box, code
     msg_box = output()
     action = await actions("Выберите действие: ", ["Войти", "Регистрация"])
     if action == "Регистрация":
@@ -83,26 +94,39 @@ async def update_message(websocket):
                     continue
                 all_messages.append(message)
                 msg_box.append(put_markdown(f"`{message['sender']}`: {message['message']}"))
-                with use_scope('buttons_under_chat'):
-                    clear()
-                    put_buttons(['wddwdwdw'], onclick=change_dialog)
             msg_box.append()
 
 
 async def change_dialog(btn: str):
     global recipient
-    recipient = btn
-    messages_in_dialog = [i for i in all_messages if i['sender'] == btn or i['recipient'] == btn]
-    msg_box.append(put_markdown(f'\n\n{"-" * 32}\n\n<strong>Диалог с <i>{recipient}</i></strong>\n'))
-    for message in messages_in_dialog:
-        msg_box.append(put_markdown(f"`{message['sender']}`: {message['message']}"))
-    msg_box.append()
+    if not await check_new_dialog(btn):
+        recipient = btn
+        messages_in_dialog = [i for i in all_messages if i['sender'] == btn or i['recipient'] == btn]
+        msg_box.append(put_markdown(f'\n\n{"-" * 32}\n\n<strong>Диалог с <i>{recipient}</i></strong>\n'))
+        for message in messages_in_dialog:
+            msg_box.append(put_markdown(f"`{message['sender']}`: {message['message']}"))
+        msg_box.append()
 
 
 async def check_new_dialog(message: str) -> bool:
     if message != 'Создать диалог':
         return False
-    pass
+    with use_scope('buttons_under_chat'):
+        clear()
+        data = await input_group('Создать диалог', [input('Введите ник...', name='recipient')])
+        post_data = {
+            'sender': code,
+            'recipient': data['recipient'],
+            'message': '👐',
+        }
+        res = requests.post(SERVER_URL + '/chat/send_message', data=post_data)
+        if res.status_code != 201:
+            toast(f'❌ {res.text}')
+        with use_scope('buttons_under_chat'):
+            list_unique_dialogs = list(set(await get_list_with_dialogs()))
+            list_unique_dialogs.append('Создать диалог')
+            put_buttons(list_unique_dialogs, onclick=change_dialog)
+
 
 
 async def get_list_with_dialogs(messages: dict):
