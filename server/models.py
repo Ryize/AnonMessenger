@@ -38,7 +38,7 @@ class Message(db.Model, ORMMixin):
             'id': self.id,
             'sender': sender,
             'recipient': recipient,
-            'message': self.message,
+            'message': str(Crypt(self.message).decrypt()),
             'created_at': self.created_at.strftime(DATETIME_TEMPLATE)
         }
 

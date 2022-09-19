@@ -17,6 +17,7 @@ async def get_all_user_messages(user_db: User) -> str:
     all_messages = json.dumps({
         'sender': all_message_where_user_sender,
         'recipient': all_message_where_user_recipient,
+        'login': user_db.login,
     })
 
     return all_messages

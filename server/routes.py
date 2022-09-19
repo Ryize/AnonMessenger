@@ -51,7 +51,10 @@ async def auth_register():
 @application.route(NAMESCPACES['chat'] + '/send_message', methods=['POST'])
 async def chat_send_message():
     data = await request.form
-    sender = data.to_dict().get('sender')
+    try:
+        sender = Crypt(data.to_dict().get('sender')).decrypt()
+    except InvalidToken:
+        sender = data.to_dict().get('sender')
     recipient = data.to_dict().get('recipient')
     message = data.to_dict().get('message')
     if not message:
@@ -75,7 +78,7 @@ async def polling(code: str):
     try:
         user = await login_existence_check(code)
     except InvalidToken:
-        return await websocket.send('Пользователь не найден!')
+        return await websocket.close(code=400)
 
     all_messages = await get_all_user_messages(user)
     last_message_date = await get_last_messages_date(json.loads(all_messages))
