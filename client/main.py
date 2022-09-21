@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+import pywebio.session
 import requests
 import websockets
 from pywebio import start_server
@@ -34,6 +35,7 @@ class Storage:
 
 async def main():
     msg_box = output()
+    pywebio.session.set_env(title='Анонимный мессенджер Ryize')
     Storage.msg_box = msg_box
     put_markdown("<center><h2>Анонимный мессенджер Ryize</h2></center>")
     action = await actions("Выберите действие: ", ["Войти", "Регистрация"])
@@ -139,7 +141,7 @@ async def check_new_dialog(message: str) -> bool:
 
 async def display_list_of_dialogs():
     with use_scope('buttons_under_chat'):
-        put_buttons(['Создать диалог'], color='warning', onclick=check_new_dialog)
+        put_buttons([dict(label='Создать диалог', value='Создать диалог', color='success')], onclick=check_new_dialog)
         put_buttons(Storage.dialogs, onclick=change_dialog)
 
 
@@ -157,4 +159,4 @@ async def get_list_with_dialogs(messages: dict):
 
 
 if __name__ == "__main__":
-    start_server(main, debug=True, port=8080, cdn=False)
+    start_server(main, debug=True, port=8080)
