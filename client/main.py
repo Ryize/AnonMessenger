@@ -21,21 +21,28 @@ DATETIME_TEMPLATE = "%Y-%m-%d %H:%M:%S.%f"
 # TODO: 1) Провести масштабный рефакторинг кода, пока это не разрослось в большую проблему (Critical);
 # TODO: 2) Новый диалог попадает на предпоследний элемент (Bug); (✅)
 # TODO: 3) Окрасить кнопку "Создать диалог" в какой-нибудь цвет (Minor) (✅);
-# TODO: 4) Попробовать убрать кнопку "Сброс", толку от неё нет (Minor);
-# TODO: 5) Попроовать убрать фразу с тайтлом библиотеки на сайте (Will) (❌ Технически невозможно).
+# TODO: 4) Попробовать убрать кнопку "Сброс", толку от неё нет (Minor) (❌ Технически невозможно);
+# TODO: 5) Попробовать убрать фразу с тайтлом библиотеки на сайте (Will) (❌ Технически невозможно).
 
 
 @dataclass
 class Storage:
-    code: str
-    msg_box: Any
-    dialogs: list
-    recipient: str
-    all_messages: list
+    """
+    Класс для хранения основных данных программы
+    """
+    code: str  # Код используемый для входа в систему
+    msg_box: Any  # Объект получаемый от pywebio.output
+    dialogs: list  # Список со всеми людьми, которым писал пользователь
+    recipient: str  # Получатель (обычно сообщения)
+    all_messages: list  # Все сообщения, которые были отправлены пользователем
 
 
 async def main():
-    async def _register():
+    async def _register() -> None:
+        """
+        Используется для регистрации на платформе, устанавливает Strotage.code.
+        :return: None
+        """
         login = await input("Введите login:")
         Storage.code = login
         res = requests.post(SERVER_URL + "/auth/register", data={"login": login})
@@ -55,12 +62,20 @@ async def main():
             )
         )
 
-    async def _login():
+    async def _login() -> None:
+        """
+        Используется для авторизации в системе, устанавливает Strotage.code.
+        :return: None
+        """
         code = await input("Введите код:")
         Storage.code = code
         put_scrollable(Storage.msg_box, height=400, keep_bottom=True)
 
-    async def _message_sending_block():
+    async def _message_sending_block() -> None:
+        """
+        Блок отправки сообщения, добавляет блок "Отправить сообщение", устанавливает Storage.recipient.
+        :return: None
+        """
         while True:
             try:
                 recipient = Storage.recipient
@@ -77,8 +92,14 @@ async def main():
             except AttributeError:
                 await asyncio.sleep(0.25)
 
-
-    async def _select_action(_login, _register, action):
+    async def _select_action(_login, _register, action: str) -> None:
+        """
+        Используется для вызова действия (регистрация, авторизация. В случае иного выбора выведет предупреждение и кнопку "Начать заново")
+        :param _login: function (функция для авторизации)
+        :param _register: function (функция для регистрации)
+        :param action: str (выбранное действие)
+        :return:
+        """
         if action == "Регистрация":
             await _register()
 
@@ -103,10 +124,14 @@ async def main():
     await _message_sending_block()
 
 
-async def refresh_msg():
+async def refresh_msg() -> None:
+    """
+    Добавляет сообщение на экран, когда оно пришло.
+    :return: None
+    """
     try:
         async with websockets.connect(
-            f"ws://127.0.0.1:5000/chat/accept/{Storage.code}"
+                f"ws://127.0.0.1:5000/chat/accept/{Storage.code}"
         ) as websocket:
             await update_message(websocket)
     except InvalidStatusCode:
@@ -118,19 +143,34 @@ async def refresh_msg():
         )
 
 
-async def update_message(websocket):
-    async def _first_update_message(messages: dict):
+async def update_message(websocket) -> None:
+    """
+    Для работы с добавлением диалогов, сообщений, работой с новыми сообщениями.
+    :param websocket (объект возвращаемый websockets.connect)
+    :return: None
+    """
+    async def _first_update_message(messages: dict) -> None:
+        """
+        Выводит список уникальных диалогов.
+        :param messages: dict (словарь с сообщениями, который передал сервер)
+        :return: None
+        """
         dialogs = await get_list_with_dialogs(messages)
         Storage.dialogs = list(set(dialogs))
         recipient = await actions("Выберите диалог: ", list(set(dialogs)))
         await change_dialog(recipient)
         await display_list_of_dialogs()
 
-    async def _output_new_message(messages: dict):
+    async def _output_new_message(messages: dict) -> None:
+        """
+        Выводит пришедшее сообщение.
+        :param messages: dict (словарь с сообщением передаваемый сервером)
+        :return: None
+        """
         for message in messages:
             if (
-                not (isinstance(message, dict))
-                or message["recipient"] != Storage.recipient
+                    not (isinstance(message, dict))
+                    or message["recipient"] != Storage.recipient
             ):
                 continue
             Storage.all_messages.append(message)
@@ -139,7 +179,7 @@ async def update_message(websocket):
             )
         Storage.msg_box.append()
 
-    first_iter = True
+    first_iter = True  # В случае первого запуска, выводит список диалогов
     while True:
         messages = await websocket.recv()
         messages = json.loads(messages)
@@ -150,7 +190,12 @@ async def update_message(websocket):
             await _output_new_message(messages)
 
 
-async def change_dialog(btn: str):
+async def change_dialog(btn: str) -> None:
+    """
+    Используется для изменения текущего диалога, изменяет Storage.recipient.
+    :param btn: str (пользователь, с которым мы теперь общаемся)
+    :return: None
+    """
     if not await check_new_dialog(btn):
         Storage.recipient = btn
         messages_in_dialog = [
@@ -171,7 +216,16 @@ async def change_dialog(btn: str):
 
 
 async def check_new_dialog(message: str) -> bool:
+    """
+    Создаёт диалог на сервере и проверяет получившийся результат (по коду).
+    :param message: str
+    :return: bool
+    """
     async def _get_send_data() -> dict:
+        """
+        Отправляет сообщение "👐" на сервер, для создания диалога.
+        :return: dict (словарь с сообщением, получаемый от сервера)
+        """
         data = await input_group(
             "Создать диалог", [input("Введите ник...", name="recipient")]
         )
@@ -183,6 +237,12 @@ async def check_new_dialog(message: str) -> bool:
         return post_data
 
     async def _check_res(post_data: dict, res) -> None:
+        """
+        Проверка результата запроса, в случае кода ответа != 201, выводит ошибку.
+        :param post_data: dict (словарь с данными от сервера)
+        :param res: (объект, возвращаемый requests.post)
+        :return: None
+        """
         if res.status_code != 201:
             toast(f"❌ {res.text}")
         else:
@@ -201,7 +261,11 @@ async def check_new_dialog(message: str) -> bool:
         await display_list_of_dialogs()
 
 
-async def display_list_of_dialogs():
+async def display_list_of_dialogs() -> None:
+    """
+    Выводит список диалогов на сайте.
+    :return: None
+    """
     with use_scope("buttons_under_chat"):
         put_buttons(
             [dict(label="Создать диалог", value="Создать диалог", color="success")],
@@ -210,7 +274,12 @@ async def display_list_of_dialogs():
         put_buttons(Storage.dialogs, onclick=change_dialog)
 
 
-async def get_list_with_dialogs(messages: dict):
+async def get_list_with_dialogs(messages: dict) -> list:
+    """
+    Возвращает список всех диалогов пользователя.
+    :param messages: list (список с сообщениями [0] - sender, [1] - recipient)
+    :return:
+    """
     dialogs = []
     all_messages = []
     for i in [messages["sender"], messages["recipient"]]:
