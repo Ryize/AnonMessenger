@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+from typing import Optional
 
 from cryptography.fernet import InvalidToken
 from quart import request, make_response, websocket
@@ -16,6 +17,19 @@ NAMESCPACES = {
     'chat': '/chat',
     'info': '/',
 }
+
+
+class UserWebsocket:
+    _websockets = {}
+
+    def get_websocket(self, user: str):
+        return self._websockets.get(user)
+
+    def create_or_update_websocket(self, user: str, _websocket: websocket) -> None:
+        self._websockets[user] = websocket
+
+
+user_websockets = UserWebsocket()
 
 
 @application.route(NAMESCPACES['auth'])
@@ -73,16 +87,31 @@ async def chat_send_message():
     return await make_response(message.message, 201)
 
 
-@application.websocket(NAMESCPACES['chat'] + '/accept/<code>')
-async def polling(code: str):
+@application.route(NAMESCPACES['chat'] + '/get_all_messages', methods=['POST'])
+async def get_all_messages():
+    data = await request.form
+    code = data.to_dict().get('code')
+    print(code)
+    try:
+        user = await login_existence_check(code)
+    except InvalidToken:
+        return await make_response('Пользователя с таким кодом несуществует!', 201)
+
+    all_messages = await get_all_user_messages(user)
+    return await make_response(all_messages, 200)
+
+@application.websocket(NAMESCPACES['chat'] + '/accept/<code>/<recipient>')
+async def polling(code: str, recipient: str):
     try:
         user = await login_existence_check(code)
     except InvalidToken:
         return await websocket.close(code=400)
 
+    user_websockets.create_or_update_websocket(user.login, websocket)
+
     all_messages = await get_all_user_messages(user)
     last_message_date = await get_last_messages_date(json.loads(all_messages))
-    await websocket.send(all_messages)
+    await user_websockets.get_websocket(user.login).send(all_messages)
 
     while True:
         new_message = Message.query.filter(Message.created_at > last_message_date,
@@ -90,5 +119,7 @@ async def polling(code: str):
         if new_message:
             new_message = to_json_type(new_message)
             await websocket.send(json.dumps(new_message))
+            if user_websockets.get_websocket(recipient):
+                await user_websockets.get_websocket(recipient).send(json.dumps(new_message))
             last_message_date = new_message[-1]['created_at']
         await asyncio.sleep(1)

@@ -2,7 +2,7 @@ import asyncio
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 import pywebio.session
 import requests
@@ -18,11 +18,11 @@ from config import SERVER_URL
 DATETIME_TEMPLATE = "%Y-%m-%d %H:%M:%S.%f"
 
 
-# TODO: 1) Провести масштабный рефакторинг кода, пока это не разрослось в большую проблему (Critical);
+# TODO: 1) Провести масштабный рефакторинг кода, пока это не разрослось в большую проблему (Critical) (✅);
 # TODO: 2) Новый диалог попадает на предпоследний элемент (Bug); (✅)
 # TODO: 3) Окрасить кнопку "Создать диалог" в какой-нибудь цвет (Minor) (✅);
 # TODO: 4) Попробовать убрать кнопку "Сброс", толку от неё нет (Minor) (❌ Технически невозможно);
-# TODO: 5) Попробовать убрать фразу с тайтлом библиотеки на сайте (Will) (❌ Технически невозможно).
+# TODO: 5) Попробовать убрать фразу с тайтлом библиотеки на сайте (Will) (✅).
 
 
 @dataclass
@@ -33,8 +33,8 @@ class Storage:
     code: str  # Код используемый для входа в систему
     msg_box: Any  # Объект получаемый от pywebio.output
     dialogs: list  # Список со всеми людьми, которым писал пользователь
-    recipient: str  # Получатель (обычно сообщения)
     all_messages: list  # Все сообщения, которые были отправлены пользователем
+    recipient: Optional[str] = None  # Получатель (обычно сообщения)
 
 
 async def main():
@@ -115,6 +115,7 @@ async def main():
     msg_box = output()
     pywebio.session.set_env(title="Анонимный мессенджер Ryize")
     Storage.msg_box = msg_box
+    run_js("elem=document.getElementsByTagName(`footer`)[0]; elem.parentNode.removeChild(elem)")
     put_markdown("<center><h2>Анонимный мессенджер Ryize</h2></center>")
     action = await actions("Выберите действие: ", ["Войти", "Регистрация"])
     await _select_action(_login, _register, action)
@@ -130,10 +131,15 @@ async def refresh_msg() -> None:
     :return: None
     """
     try:
-        async with websockets.connect(
-                f"ws://127.0.0.1:5000/chat/accept/{Storage.code}"
-        ) as websocket:
-            await update_message(websocket)
+        await get_list_with_dialogs()
+        await display_list_of_dialogs()
+        while True:
+            if Storage.recipient:
+                async with websockets.connect(
+                        f"ws://127.0.0.1:5000/chat/accept/{Storage.code}/{Storage.recipient}"
+                ) as websocket:
+                    await update_message(websocket)
+            await asyncio.sleep(0.75)
     except InvalidStatusCode:
         clear()
         put_markdown(f"❌ <strong>Неверный код!</strong>")
@@ -149,6 +155,7 @@ async def update_message(websocket) -> None:
     :param websocket (объект возвращаемый websockets.connect)
     :return: None
     """
+
     async def _first_update_message(messages: dict) -> None:
         """
         Выводит список уникальных диалогов.
@@ -179,13 +186,9 @@ async def update_message(websocket) -> None:
             )
         Storage.msg_box.append()
 
-    first_iter = True  # В случае первого запуска, выводит список диалогов
     while True:
         messages = await websocket.recv()
         messages = json.loads(messages)
-        if first_iter:
-            await _first_update_message(messages)
-            first_iter = False
         if messages:
             await _output_new_message(messages)
 
@@ -221,6 +224,7 @@ async def check_new_dialog(message: str) -> bool:
     :param message: str
     :return: bool
     """
+
     async def _get_send_data() -> dict:
         """
         Отправляет сообщение "👐" на сервер, для создания диалога.
@@ -274,7 +278,7 @@ async def display_list_of_dialogs() -> None:
         put_buttons(Storage.dialogs, onclick=change_dialog)
 
 
-async def get_list_with_dialogs(messages: dict) -> list:
+async def get_list_with_dialogs(messages: Optional[dict] = None) -> list:
     """
     Возвращает список всех диалогов пользователя.
     :param messages: list (список с сообщениями [0] - sender, [1] - recipient)
@@ -282,6 +286,8 @@ async def get_list_with_dialogs(messages: dict) -> list:
     """
     dialogs = []
     all_messages = []
+    messages = messages or json.loads(
+        requests.post(f'{SERVER_URL}/chat/get_all_messages', data={'code': Storage.code}).text)
     for i in [messages["sender"], messages["recipient"]]:
         for user in i:
             dialogs.append(
@@ -293,10 +299,10 @@ async def get_list_with_dialogs(messages: dict) -> list:
     all_messages.sort(
         key=lambda i: datetime.strptime(i["created_at"], DATETIME_TEMPLATE)
     )
-    Storage.dialogs = dialogs
+    Storage.dialogs = list(set(dialogs))
     Storage.all_messages = all_messages
     return dialogs
 
 
 if __name__ == "__main__":
-    start_server(main, debug=True, port=8080)
+    start_server(main, debug=True, port=8080, remote_access=True)
